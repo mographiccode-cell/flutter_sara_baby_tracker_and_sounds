@@ -1,0 +1,113 @@
+diff -ruN a/lib/repository.dart b/lib/repository.dart
+--- a/lib/repository.dart	2026-09-05 18:57:22.843931982 +0000
++++ b/lib/repository.dart	2026-09-05 18:57:22.846259680 +0000
+@@ -139,6 +139,25 @@
+     return rows.isEmpty ? null : (rows.first['shop_id'] as num).toInt();
+   }
+ 
++  Future<List<PurchaseItemInput>> getPurchaseItems(int entryId) async {
++    final db = await AppDatabase.instance.database;
++    final rows = await db.query(
++      'purchase_items',
++      columns: ['name', 'quantity', 'unit_price'],
++      where: 'entry_id = ?',
++      whereArgs: [entryId],
++      orderBy: 'id ASC',
++    );
++    return rows
++        .map((r) => PurchaseItemInput(
++              name: (r['name'] as String?) ?? '',
++              quantity: (r['quantity'] as num?)?.toDouble() ?? 1.0,
++              unitPrice: (r['unit_price'] as num?)?.toDouble() ?? 0.0,
++            ))
++        .where((i) => i.name.trim().isNotEmpty)
++        .toList();
++  }
++
+   Future<List<PurchaseItemInput>> getLastPurchaseItems(int shopId) async {
+     final db = await AppDatabase.instance.database;
+     final entries = await db.rawQuery('''
+diff -ruN a/lib/screens.dart b/lib/screens.dart
+--- a/lib/screens.dart	2026-09-05 18:57:22.843994995 +0000
++++ b/lib/screens.dart	2026-09-05 18:57:22.846292389 +0000
+@@ -6,6 +6,7 @@
+ import 'app_database.dart';
+ import 'models.dart';
+ import 'repository.dart';
++import 'shop_report_page.dart';
+ 
+ final _moneyFormat = intl.NumberFormat('#,##0.##', 'en_US');
+ final _dateFormat = intl.DateFormat('yyyy/MM/dd', 'en_US');
+@@ -504,6 +505,20 @@
+                     ),
+                   ],
+                 ),
++                const SizedBox(height: 12),
++                OutlinedButton.icon(
++                  onPressed: () {
++                    Navigator.push<void>(
++                      context,
++                      MaterialPageRoute(builder: (_) => ShopReportPage(shopId: shop.id)),
++                    );
++                  },
++                  icon: const Icon(Icons.picture_as_pdf_rounded),
++                  label: const Padding(
++                    padding: EdgeInsets.symmetric(vertical: 12),
++                    child: Text('كشف تفصيلي PDF'),
++                  ),
++                ),
+                 const SizedBox(height: 24),
+                 const _SectionTitle(title: 'سجل الحساب'),
+                 const SizedBox(height: 10),
+diff -ruN a/lib/shop_report_page.dart b/lib/shop_report_page.dart
+--- a/lib/shop_report_page.dart	1970-01-01 00:00:00.000000000 +0000
++++ b/lib/shop_report_page.dart	2026-09-05 18:57:22.846117281 +0000
+@@ -0,0 +1,312 @@
++import 'dart:io';
++import 'dart:typed_data';
++
++import 'package:file_picker/file_picker.dart';
++import 'package:flutter/material.dart';
++import 'package:flutter/services.dart';
++import 'package:intl/intl.dart' as intl;
++import 'package:pdf/pdf.dart';
++import 'package:pdf/widgets.dart' as pw;
++import 'package:printing/printing.dart';
++
++import 'models.dart';
++import 'repository.dart';
++
++class _ReportData {
++  final ShopBalance shop;
++  final List<LedgerEntry> entries;
++  final Map<int, List<PurchaseItemInput>> itemsByEntry;
++
++  const _ReportData({required this.shop, required this.entries, required this.itemsByEntry});
++}
++
++class ShopReportPage extends StatefulWidget {
++  final int shopId;
++  const ShopReportPage({super.key, required this.shopId});
++
++  @override
++  State<ShopReportPage> createState() => _ShopReportPageState();
++}
++
++class _ShopReportPageState extends State<ShopReportPage> {
++  late Future<_ReportData> _dataFuture;
++  Uint8List? _cachedPdf;
++  bool _saving = false;
++
++  final _date = intl.DateFormat('yyyy/MM/dd', 'en_US');
++  final _dateTime = intl.DateFormat('yyyy/MM/dd  HH:mm', 'en_US');
++  final _number = intl.NumberFormat('#,##0.##', 'en_US');
++
++  @override
++  void initState() {
++    super.initState();
++    _dataFuture = _loadData();
++  }
++
++  Future<_ReportData> _loadData() async {
++    final repo = AppRepository.instance;
++    final shop 
