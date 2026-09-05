@@ -6,6 +6,7 @@ on:
       - masroofi-build-20260905
     paths:
       - 'masroofi_chunks/**'
+      - 'masroofi_v13_patch/**'
       - '.github/workflows/masroofi_build.yml'
   workflow_dispatch:
 
@@ -30,7 +31,7 @@ jobs:
           channel: stable
           cache: true
 
-      - name: Restore and verify Masroofi source
+      - name: Restore Masroofi 1.2 source
         shell: bash
         run: |
           cat masroofi_chunks/part_* > /tmp/masroofi.b64
@@ -39,6 +40,15 @@ jobs:
           unzip -q -o /tmp/masroofi.zip
           test -f masroofi/pubspec.yaml
           test -f masroofi/lib/main.dart
+
+      - name: Apply Masroofi 1.3 update
+        shell: bash
+        run: |
+          cp masroofi_v13_patch/shop_report_page.dart masroofi/lib/shop_report_page.dart
+          python3 masroofi_v13_patch/apply_patch.py
+          grep '^version:' masroofi/pubspec.yaml
+          grep -q 'version: 1.3.0+4' masroofi/pubspec.yaml
+          grep -q 'ShopReportPage' masroofi/lib/screens.dart
 
       - name: Generate Android project
         working-directory: masroofi
@@ -49,23 +59,29 @@ jobs:
 
       - name: Analyze
         working-directory: masroofi
-        run: flutter analyze || true
+        run: flutter analyze
 
       - name: Build release APK
         working-directory: masroofi
         run: flutter build apk --release
 
-      - name: Verify APK
+      - name: Verify APK identity
         shell: bash
         run: |
-          test -s masroofi/build/app/outputs/flutter-apk/app-release.apk
-          ls -lh masroofi/build/app/outputs/flutter-apk/app-release.apk
-          sha256sum masroofi/build/app/outputs/flutter-apk/app-release.apk
+          APK=masroofi/build/app/outputs/flutter-apk/app-release.apk
+          test -s "$APK"
+          AAPT=$(find "$ANDROID_HOME/build-tools" -name aapt -type f | sort -V | tail -1)
+          "$AAPT" dump badging "$APK" | head -1 | tee /tmp/badging.txt
+          grep -q "name='com.mographiccode.masroofi'" /tmp/badging.txt
+          grep -q "versionCode='4'" /tmp/badging.txt
+          grep -q "versionName='1.3.0'" /tmp/badging.txt
+          sha256sum "$APK"
+          ls -lh "$APK"
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: Masroofi-APK
+          name: Masroofi-1.3.0-APK
           path: masroofi/build/app/outputs/flutter-apk/app-release.apk
           if-no-files-found: error
           retention-days: 7
