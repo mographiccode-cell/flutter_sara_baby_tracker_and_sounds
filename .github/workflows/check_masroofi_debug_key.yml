@@ -1,0 +1,24 @@
+name: Check Masroofi Debug Key
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - '.github/workflows/check_masroofi_debug_key.yml'
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Inspect Android debug keystore
+        shell: bash
+        run: |
+          echo "HOME=$HOME"
+          ls -la ~/.android || true
+          if [ -f ~/.android/debug.keystore ]; then
+            echo "DEBUG_KEY_EXISTS=yes"
+            keytool -list -v -keystore ~/.android/debug.keystore -storepass android -alias androiddebugkey | grep -E 'Owner:|SHA256:'
+          else
+            echo "DEBUG_KEY_EXISTS=no"
+          fi
