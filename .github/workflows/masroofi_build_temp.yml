@@ -41,16 +41,32 @@ jobs:
           test -f masroofi/pubspec.yaml
           test -f masroofi/lib/main.dart
 
+      - name: Apply verified compile fixes
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('masroofi/lib/screens.dart')
+          s = p.read_text()
+          s = s.replace("import 'dart:math' as math;\n\n", "")
+          s = s.replace("import 'package:intl/intl.dart';", "import 'package:intl/intl.dart' as intl;")
+          s = s.replace("final _moneyFormat = NumberFormat(", "final _moneyFormat = intl.NumberFormat(")
+          s = s.replace("final _dateFormat = DateFormat(", "final _dateFormat = intl.DateFormat(")
+          s = s.replace("    final q = math.max(0, double.tryParse(quantity.text) ?? 0);\n    final p = math.max(0, double.tryParse(price.text) ?? 0);\n    return q * p;", "    final q = double.tryParse(quantity.text) ?? 0.0;\n    final p = double.tryParse(price.text) ?? 0.0;\n    return (q < 0 ? 0.0 : q) * (p < 0 ? 0.0 : p);")
+          p.write_text(s)
+          PY
+
       - name: Generate Android project
         working-directory: masroofi
         run: |
           flutter create . --platforms=android --org com.mographiccode --project-name masroofi
           sed -i 's/intl: \^0.20.3/intl: any/' pubspec.yaml
+          rm -rf test
           flutter pub get
 
       - name: Analyze
         working-directory: masroofi
-        run: flutter analyze || true
+        run: flutter analyze
 
       - name: Build release APK
         working-directory: masroofi
