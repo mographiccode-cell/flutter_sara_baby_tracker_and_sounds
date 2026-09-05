@@ -3,7 +3,7 @@ name: Build Masroofi APK
 on:
   push:
     branches: [masroofi-build-20260905]
-    paths: ['masroofi_v13_chunks/**','.github/workflows/masroofi_build.yml']
+    paths: ['masroofi_v13_patch_chunks/**','.github/workflows/masroofi_build.yml']
   workflow_dispatch:
 
 jobs:
@@ -17,15 +17,22 @@ jobs:
       - uses: subosito/flutter-action@v2
         with: {flutter-version: '3.47.2', channel: stable, cache: true}
 
-      - name: Restore Masroofi 1.3 source
+      - name: Restore stable Masroofi 1.2 source
         run: |
-          cat masroofi_v13_chunks/part_* > /tmp/masroofi.b64
+          cat masroofi_chunks/part_* > /tmp/masroofi.b64
           base64 --decode /tmp/masroofi.b64 > /tmp/masroofi.zip
-          echo "b165bfc0609e07708a4f05e7cde4dcc75c94c868e895e7113bc6dc7b73e4596e  /tmp/masroofi.zip" | sha256sum -c -
+          echo "dd3671a009758463ddc9ce8e4236f8f8a63eb8ef9a64f7db7b03a66625e91e6d  /tmp/masroofi.zip" | sha256sum -c -
           unzip -q -o /tmp/masroofi.zip
           test -f masroofi/pubspec.yaml
-          test -f masroofi/lib/shop_report_page.dart
-          grep -q '^version: 1.3.0+4' masroofi/pubspec.yaml
+
+      - name: Apply verified Masroofi 1.3 patch
+        working-directory: masroofi
+        run: |
+          cat ../masroofi_v13_patch_chunks/part_* > /tmp/masroofi_v13.patch
+          patch -p1 < /tmp/masroofi_v13.patch
+          grep -q '^version: 1.3.0+4' pubspec.yaml
+          test -f lib/shop_report_page.dart
+          grep -q 'كشف تفصيلي PDF' lib/screens.dart
 
       - name: Generate Android
         working-directory: masroofi
