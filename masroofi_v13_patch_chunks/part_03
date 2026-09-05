@@ -1,0 +1,93 @@
+                                  item.name,
++                                  _number.format(item.quantity),
++                                  _money(item.unitPrice),
++                                  _money(item.total),
++                                ]
++                                    .map((t) => pw.Padding(
++                                          padding: const pw.EdgeInsets.all(5),
++                                          child: pw.Text(t, style: const pw.TextStyle(fontSize: 8)),
++                                        ))
++                                    .toList(),
++                              )),
++                        ],
++                      ),
++                    ],
++                    if ((entry.note ?? '').trim().isNotEmpty) ...[
++                      pw.SizedBox(height: 6),
++                      pw.Text('ملاحظة: ${entry.note}', style: const pw.TextStyle(fontSize: 8, color: PdfColors.grey700)),
++                    ],
++                  ],
++                ),
++              );
++            }),
++          pw.SizedBox(height: 10),
++          pw.Text(
++            'الإجمالي النهائي: مشتريات ${_money(purchases)} - دفعات ${_money(payments)} = رصيد ${_money(data.shop.balance)}',
++            style: pw.TextStyle(fontSize: 11, fontWeight: pw.FontWeight.bold),
++          ),
++        ],
++      ),
++    );
++    _cachedPdf = await doc.save();
++    return _cachedPdf!;
++  }
++
++  String _safeName(String name) => name.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_').trim();
++
++  Future<void> _savePdf(_ReportData data) async {
++    if (_saving) return;
++    setState(() => _saving = true);
++    try {
++      final bytes = await _buildPdf(data);
++      final filename = 'كشف_${_safeName(data.shop.name)}_${intl.DateFormat('yyyyMMdd').format(DateTime.now())}.pdf';
++      final path = await FilePicker.platform.saveFile(
++        dialogTitle: 'حفظ كشف الحساب PDF',
++        fileName: filename,
++        type: FileType.custom,
++        allowedExtensions: const ['pdf'],
++      );
++      if (path == null) return;
++      await File(path).writeAsBytes(bytes, flush: true);
++      if (mounted) {
++        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('تم حفظ كشف PDF بنجاح.')));
++      }
++    } catch (e) {
++      if (mounted) {
++        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('تعذر حفظ الكشف: $e')));
++      }
++    } finally {
++      if (mounted) setState(() => _saving = false);
++    }
++  }
++
++  @override
++  Widget build(BuildContext context) {
++    return FutureBuilder<_ReportData>(
++      future: _dataFuture,
++      builder: (context, snapshot) {
++        final data = snapshot.data;
++        return Scaffold(
++          appBar: AppBar(
++            title: Text(data == null ? 'كشف الحساب PDF' : 'كشف ${data.shop.name}'),
++            actions: [
++              if (data != null)
++                IconButton(
++                  onPressed: _saving ? null : () => _savePdf(data),
++                  tooltip: 'حفظ PDF',
++                  icon: _saving
++                      ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2))
++                      : const Icon(Icons.download_rounded),
++                ),
++            ],
++          ),
++          body: snapshot.hasError
++              ? Center(child: Padding(padding: const EdgeInsets.all(24), child: Text('تعذر إنشاء الكشف: ${snapshot.error}', textAlign: TextAlign.center)))
++              : data == null
++                  ? const Center(child: CircularProgressIndicator())
++                  : PdfPreview(
++                      canChangePageFormat: false,
++                      canChangeOrientation: false,
++                      allowPrinting: true,
++                      allowSharing: true,
++                      pdfFileName: 'كشف_${_safeName(data.shop.name)}.pdf',
++                      build: (_) => 
