@@ -3,7 +3,7 @@ name: Build Masroofi APK
 on:
   push:
     branches: [masroofi-build-20260905]
-    paths: ['masroofi_v13_patch_chunks/**','.github/workflows/masroofi_build.yml']
+    paths: ['masroofi_v13_patch/**','.github/workflows/masroofi_build.yml']
   workflow_dispatch:
 
 jobs:
@@ -17,7 +17,7 @@ jobs:
       - uses: subosito/flutter-action@v2
         with: {flutter-version: '3.47.2', channel: stable, cache: true}
 
-      - name: Restore stable Masroofi 1.2 source
+      - name: Restore stable Masroofi source
         run: |
           cat masroofi_chunks/part_* > /tmp/masroofi.b64
           base64 --decode /tmp/masroofi.b64 > /tmp/masroofi.zip
@@ -25,14 +25,52 @@ jobs:
           unzip -q -o /tmp/masroofi.zip
           test -f masroofi/pubspec.yaml
 
-      - name: Apply verified Masroofi 1.3 patch
-        working-directory: masroofi
+      - name: Upgrade source to Masroofi 1.3
+        shell: bash
         run: |
-          cat ../masroofi_v13_patch_chunks/part_* > /tmp/masroofi_v13.patch
-          patch -p1 < /tmp/masroofi_v13.patch
-          grep -q '^version: 1.3.0+4' pubspec.yaml
-          test -f lib/shop_report_page.dart
-          grep -q 'كشف تفصيلي PDF' lib/screens.dart
+          cp masroofi_v13_patch/shop_report_page.dart masroofi/lib/shop_report_page.dart
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          root = Path('masroofi')
+
+          p = root / 'pubspec.yaml'
+          s = p.read_text()
+          s = re.sub(r'(?m)^version:\s*.*$', 'version: 1.3.0+4', s, count=1)
+          if '  pdf:' not in s:
+              if '  file_picker:' in s:
+                  s = re.sub(r'(?m)^(  file_picker:.*)$', r'\1\n  pdf: ^3.11.3\n  printing: ^5.14.2', s, count=1)
+              else:
+                  s = s.replace('dependencies:\n', 'dependencies:\n  pdf: ^3.11.3\n  printing: ^5.14.2\n', 1)
+          p.write_text(s)
+
+          p = root / 'lib/repository.dart'
+          s = p.read_text()
+          if 'getPurchaseItems(int entryId)' not in s:
+              marker = '  Future<List<PurchaseItemInput>> getLastPurchaseItems(int shopId) async {'
+              if marker not in s:
+                  raise SystemExit('repository marker not found')
+              method = '''  Future<List<PurchaseItemInput>> getPurchaseItems(int entryId) async {\n    final db = await AppDatabase.instance.database;\n    final rows = await db.query(\n      'purchase_items',\n      columns: ['name', 'quantity', 'unit_price'],\n      where: 'entry_id = ?',\n      whereArgs: [entryId],\n      orderBy: 'id ASC',\n    );\n    return rows\n        .map((r) => PurchaseItemInput(\n              name: (r['name'] as String?) ?? '',\n              quantity: (r['quantity'] as num?)?.toDouble() ?? 1.0,\n              unitPrice: (r['unit_price'] as num?)?.toDouble() ?? 0.0,\n            ))\n        .where((i) => i.name.trim().isNotEmpty)\n        .toList();\n  }\n\n'''
+              s = s.replace(marker, method + marker, 1)
+          p.write_text(s)
+
+          p = root / 'lib/screens.dart'
+          s = p.read_text()
+          if "import 'shop_report_page.dart';" not in s:
+              s = s.replace("import 'repository.dart';", "import 'repository.dart';\nimport 'shop_report_page.dart';", 1)
+          if 'ShopReportPage(shopId: shop.id)' not in s:
+              marker = "                const SizedBox(height: 24),\n                const _SectionTitle(title: 'سجل الحساب'),"
+              if marker not in s:
+                  raise SystemExit('screens marker not found')
+              block = """                const SizedBox(height: 12),\n                OutlinedButton.icon(\n                  onPressed: () {\n                    Navigator.push<void>(\n                      context,\n                      MaterialPageRoute(builder: (_) => ShopReportPage(shopId: shop.id)),\n                    );\n                  },\n                  icon: const Icon(Icons.picture_as_pdf_rounded),\n                  label: const Padding(\n                    padding: EdgeInsets.symmetric(vertical: 12),\n                    child: Text('كشف تفصيلي PDF'),\n                  ),\n                ),\n                const SizedBox(height: 24),\n                const _SectionTitle(title: 'سجل الحساب'),"""
+              s = s.replace(marker, block, 1)
+          p.write_text(s)
+          PY
+          grep -q '^version: 1.3.0+4' masroofi/pubspec.yaml
+          grep -q 'getPurchaseItems(int entryId)' masroofi/lib/repository.dart
+          grep -q 'كشف تفصيلي PDF' masroofi/lib/screens.dart
+          test -f masroofi/lib/shop_report_page.dart
 
       - name: Generate Android
         working-directory: masroofi
