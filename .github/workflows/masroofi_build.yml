@@ -1,9 +1,11 @@
 name: Build Masroofi APK
+
 on:
   push:
     branches: [masroofi-build-20260905]
-    paths: ['masroofi_chunks/**','masroofi_v13_patch/**','.github/workflows/masroofi_build.yml']
+    paths: ['masroofi_v13_chunks/**','.github/workflows/masroofi_build.yml']
   workflow_dispatch:
+
 jobs:
   build-apk:
     runs-on: ubuntu-latest
@@ -14,35 +16,44 @@ jobs:
         with: {distribution: temurin, java-version: '17'}
       - uses: subosito/flutter-action@v2
         with: {flutter-version: '3.47.2', channel: stable, cache: true}
-      - name: Restore source
+
+      - name: Restore Masroofi 1.3 source
         run: |
-          cat masroofi_chunks/part_* > /tmp/masroofi.b64
+          cat masroofi_v13_chunks/part_* > /tmp/masroofi.b64
           base64 --decode /tmp/masroofi.b64 > /tmp/masroofi.zip
+          echo "b165bfc0609e07708a4f05e7cde4dcc75c94c868e895e7113bc6dc7b73e4596e  /tmp/masroofi.zip" | sha256sum -c -
           unzip -q -o /tmp/masroofi.zip
-      - name: Apply 1.3 update
-        run: |
-          cp masroofi_v13_patch/shop_report_page.dart masroofi/lib/shop_report_page.dart
-          python3 masroofi_v13_patch/apply_patch.py
-          sed -i 's/^version:.*/version: 1.3.0+4/' masroofi/pubspec.yaml
+          test -f masroofi/pubspec.yaml
+          test -f masroofi/lib/shop_report_page.dart
+          grep -q '^version: 1.3.0+4' masroofi/pubspec.yaml
+
       - name: Generate Android
         working-directory: masroofi
         run: |
           flutter create . --platforms=android --org com.mographiccode --project-name masroofi
           sed -i 's/intl: \^0.20.3/intl: any/' pubspec.yaml
           flutter pub get
+
+      - name: Analyze
+        working-directory: masroofi
+        run: flutter analyze
+
       - name: Build APK
         working-directory: masroofi
         run: flutter build apk --release --build-name=1.3.0 --build-number=4
+
       - name: Verify APK
         run: |
           APK=masroofi/build/app/outputs/flutter-apk/app-release.apk
           test -s "$APK"
           AAPT=$(find "$ANDROID_HOME/build-tools" -name aapt -type f | sort -V | tail -1)
-          "$AAPT" dump badging "$APK" | head -1
-          "$AAPT" dump badging "$APK" | head -1 | grep "name='com.mographiccode.masroofi'"
-          "$AAPT" dump badging "$APK" | head -1 | grep "versionCode='4'"
-          "$AAPT" dump badging "$APK" | head -1 | grep "versionName='1.3.0'"
+          "$AAPT" dump badging "$APK" | head -1 | tee /tmp/badging.txt
+          grep -q "name='com.mographiccode.masroofi'" /tmp/badging.txt
+          grep -q "versionCode='4'" /tmp/badging.txt
+          grep -q "versionName='1.3.0'" /tmp/badging.txt
           sha256sum "$APK"
+          ls -lh "$APK"
+
       - uses: actions/upload-artifact@v4
         with:
           name: Masroofi-1.3.0-APK
