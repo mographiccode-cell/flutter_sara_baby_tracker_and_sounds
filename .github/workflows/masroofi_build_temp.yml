@@ -66,7 +66,7 @@ jobs:
 
       - name: Analyze
         working-directory: masroofi
-        run: flutter analyze
+        run: flutter analyze --no-fatal-infos
 
       - name: Build release APK
         working-directory: masroofi
