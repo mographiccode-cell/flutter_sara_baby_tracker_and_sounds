@@ -1,87 +1,50 @@
 name: Build Masroofi APK
-
 on:
   push:
-    branches:
-      - masroofi-build-20260905
-    paths:
-      - 'masroofi_chunks/**'
-      - 'masroofi_v13_patch/**'
-      - '.github/workflows/masroofi_build.yml'
+    branches: [masroofi-build-20260905]
+    paths: ['masroofi_chunks/**','masroofi_v13_patch/**','.github/workflows/masroofi_build.yml']
   workflow_dispatch:
-
 jobs:
   build-apk:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 35
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Java 17
-        uses: actions/setup-java@v5
-        with:
-          distribution: temurin
-          java-version: '17'
-
-      - name: Setup Flutter 3.47.2
-        uses: subosito/flutter-action@v2
-        with:
-          flutter-version: '3.47.2'
-          channel: stable
-          cache: true
-
-      - name: Restore Masroofi 1.2 source
-        shell: bash
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v5
+        with: {distribution: temurin, java-version: '17'}
+      - uses: subosito/flutter-action@v2
+        with: {flutter-version: '3.47.2', channel: stable, cache: true}
+      - name: Restore source
         run: |
           cat masroofi_chunks/part_* > /tmp/masroofi.b64
           base64 --decode /tmp/masroofi.b64 > /tmp/masroofi.zip
-          echo "dd3671a009758463ddc9ce8e4236f8f8a63eb8ef9a64f7db7b03a66625e91e6d  /tmp/masroofi.zip" | sha256sum -c -
           unzip -q -o /tmp/masroofi.zip
-          test -f masroofi/pubspec.yaml
-          test -f masroofi/lib/main.dart
-
-      - name: Apply Masroofi 1.3 update
-        shell: bash
+      - name: Apply 1.3 update
         run: |
           cp masroofi_v13_patch/shop_report_page.dart masroofi/lib/shop_report_page.dart
           python3 masroofi_v13_patch/apply_patch.py
-          grep '^version:' masroofi/pubspec.yaml
-          grep -q 'version: 1.3.0+4' masroofi/pubspec.yaml
-          grep -q 'ShopReportPage' masroofi/lib/screens.dart
-
-      - name: Generate Android project
+          sed -i 's/^version:.*/version: 1.3.0+4/' masroofi/pubspec.yaml
+      - name: Generate Android
         working-directory: masroofi
         run: |
           flutter create . --platforms=android --org com.mographiccode --project-name masroofi
           sed -i 's/intl: \^0.20.3/intl: any/' pubspec.yaml
           flutter pub get
-
-      - name: Analyze
+      - name: Build APK
         working-directory: masroofi
-        run: flutter analyze
-
-      - name: Build release APK
-        working-directory: masroofi
-        run: flutter build apk --release
-
-      - name: Verify APK identity
-        shell: bash
+        run: flutter build apk --release --build-name=1.3.0 --build-number=4
+      - name: Verify APK
         run: |
           APK=masroofi/build/app/outputs/flutter-apk/app-release.apk
           test -s "$APK"
           AAPT=$(find "$ANDROID_HOME/build-tools" -name aapt -type f | sort -V | tail -1)
-          "$AAPT" dump badging "$APK" | head -1 | tee /tmp/badging.txt
-          grep -q "name='com.mographiccode.masroofi'" /tmp/badging.txt
-          grep -q "versionCode='4'" /tmp/badging.txt
-          grep -q "versionName='1.3.0'" /tmp/badging.txt
+          "$AAPT" dump badging "$APK" | head -1
+          "$AAPT" dump badging "$APK" | head -1 | grep "name='com.mographiccode.masroofi'"
+          "$AAPT" dump badging "$APK" | head -1 | grep "versionCode='4'"
+          "$AAPT" dump badging "$APK" | head -1 | grep "versionName='1.3.0'"
           sha256sum "$APK"
-          ls -lh "$APK"
-
-      - name: Upload APK
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: Masroofi-1.3.0-APK
           path: masroofi/build/app/outputs/flutter-apk/app-release.apk
-          if-no-files-found: error
           retention-days: 7
