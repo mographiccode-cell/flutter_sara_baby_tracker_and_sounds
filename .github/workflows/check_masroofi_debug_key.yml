@@ -1,24 +1,124 @@
-name: Check Masroofi Debug Key
+name: Aman Player unsigned APK build
 
 on:
-  push:
+  pull_request:
     branches: [ main ]
-    paths:
-      - '.github/workflows/check_masroofi_debug_key.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
-  check:
+  build:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
-      - name: Inspect Android debug keystore
+      - name: Checkout build repository
+        uses: actions/checkout@v4
+
+      - name: Checkout Aman public source chunks
+        uses: actions/checkout@v4
+        with:
+          repository: mographiccode-cell/cyberscan
+          ref: aman-player-ci-public-20260927
+          path: aman-source-parts
+
+      - name: Reconstruct verified source archive
         shell: bash
         run: |
-          echo "HOME=$HOME"
-          ls -la ~/.android || true
-          if [ -f ~/.android/debug.keystore ]; then
-            echo "DEBUG_KEY_EXISTS=yes"
-            keytool -list -v -keystore ~/.android/debug.keystore -storepass android -alias androiddebugkey | grep -E 'Owner:|SHA256:'
-          else
-            echo "DEBUG_KEY_EXISTS=no"
-          fi
+          set -euxo pipefail
+          P="$GITHUB_WORKSPACE/aman-source-parts/.aman_ci"
+          base64 -d "$P/y00.b64x2" > /tmp/aman.b64
+          for f in y01.b64x3 y02.b64x3 z00.b64x3 z01.b64x3 z02.b64x3 z03.b64x3; do
+            base64 -d "$P/$f" | base64 -d >> /tmp/aman.b64
+          done
+          cat "$P/z04a.b64x4" "$P/z04b.b64x4" "$P/z04c.b64x4" "$P/z04d.b64x4" | base64 -d | base64 -d | base64 -d >> /tmp/aman.b64
+          base64 -d /tmp/aman.b64 > /tmp/aman_player.tar.xz
+          echo "7864e27b448a6f78c6168f6e13b3ecd86114d31fee23a04ef5b63e6df7d929cb  /tmp/aman_player.tar.xz" | sha256sum -c -
+          rm -rf /tmp/aman_src
+          mkdir -p /tmp/aman_src
+          tar -xJf /tmp/aman_player.tar.xz -C /tmp/aman_src
+          test -f /tmp/aman_src/pubspec.yaml
+          test -f /tmp/aman_src/lib/main.dart
+          test ! -f /tmp/aman_src/android/app/aman-release.jks
+          test ! -f /tmp/aman_src/android/key.properties
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Flutter stable
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Create Android scaffold and overlay Aman Player
+        shell: bash
+        run: |
+          set -euxo pipefail
+          rm -rf /tmp/aman_build
+          flutter create --platforms=android --org com.mahmoud --project-name aman_player /tmp/aman_build
+          rm -rf /tmp/aman_build/lib /tmp/aman_build/assets
+          cp -a /tmp/aman_src/lib /tmp/aman_build/lib
+          cp -a /tmp/aman_src/assets /tmp/aman_build/assets
+          cp /tmp/aman_src/pubspec.yaml /tmp/aman_build/pubspec.yaml
+          cp /tmp/aman_src/android/app/src/main/AndroidManifest.xml /tmp/aman_build/android/app/src/main/AndroidManifest.xml
+          rm -rf /tmp/aman_build/android/app/src/main/res /tmp/aman_build/android/app/src/main/kotlin
+          cp -a /tmp/aman_src/android/app/src/main/res /tmp/aman_build/android/app/src/main/res
+          cp -a /tmp/aman_src/android/app/src/main/kotlin /tmp/aman_build/android/app/src/main/kotlin
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path("/tmp/aman_build/android/app/build.gradle.kts")
+          s=p.read_text()
+          s=s.replace('namespace = "com.mahmoud.aman_player"', 'namespace = "com.mahmoud.amanplayer"')
+          s=s.replace('applicationId = "com.mahmoud.aman_player"', 'applicationId = "com.mahmoud.amanplayer"')
+          s=s.replace('minSdk = flutter.minSdkVersion', 'minSdk = 24')
+          s=s.replace('signingConfig = signingConfigs.getByName("debug")', '')
+          p.write_text(s)
+          PY
+          grep -q 'applicationId = "com.mahmoud.amanplayer"' /tmp/aman_build/android/app/build.gradle.kts
+          grep -q '^version: 0.1.0+1' /tmp/aman_build/pubspec.yaml
+
+      - name: Resolve packages
+        working-directory: /tmp/aman_build
+        shell: bash
+        run: |
+          set -o pipefail
+          flutter pub get 2>&1 | tee "$GITHUB_WORKSPACE/pubget.log"
+
+      - name: Build unsigned ARM64 release APK
+        working-directory: /tmp/aman_build/android
+        shell: bash
+        run: |
+          set -o pipefail
+          ./gradlew assembleRelease --stacktrace 2>&1 | tee "$GITHUB_WORKSPACE/build.log"
+          APK="$(find /tmp/aman_build/build/app/outputs/flutter-apk /tmp/aman_build/build/app/outputs/apk -type f -name '*.apk' 2>/dev/null | head -n 1)"
+          test -n "$APK"
+          cp "$APK" "$GITHUB_WORKSPACE/AmanPlayer-v0.1.0-arm64-unsigned.apk"
+          AAPT="$(find "$ANDROID_HOME/build-tools" -type f -name aapt | sort -V | tail -n 1)"
+          test -x "$AAPT"
+          "$AAPT" dump badging "$GITHUB_WORKSPACE/AmanPlayer-v0.1.0-arm64-unsigned.apk" | tee "$GITHUB_WORKSPACE/package-info.txt"
+          grep -q "package: name='com.mahmoud.amanplayer'" "$GITHUB_WORKSPACE/package-info.txt"
+          APKSIGNER_JAR="$(find "$ANDROID_HOME/build-tools" -type f -path '*/lib/apksigner.jar' | sort -V | tail -n 1)"
+          test -f "$APKSIGNER_JAR"
+          cp "$APKSIGNER_JAR" "$GITHUB_WORKSPACE/apksigner.jar"
+          sha256sum "$GITHUB_WORKSPACE/AmanPlayer-v0.1.0-arm64-unsigned.apk" > "$GITHUB_WORKSPACE/unsigned.sha256"
+          ls -lh "$GITHUB_WORKSPACE/AmanPlayer-v0.1.0-arm64-unsigned.apk"
+
+      - name: Upload APK and diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: AmanPlayer-v0.1.0-unsigned-build
+          path: |
+            AmanPlayer-v0.1.0-arm64-unsigned.apk
+            apksigner.jar
+            package-info.txt
+            unsigned.sha256
+            pubget.log
+            build.log
+          if-no-files-found: warn
+          compression-level: 0
